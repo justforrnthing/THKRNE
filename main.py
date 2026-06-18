@@ -1,5 +1,5 @@
 # ============================================
-# بوت ذكرني - ملف كامل بجميع الميزات
+# بوت ذكرني - ملف كامل بجميع الميزات (مصحح)
 # ============================================
 
 # ============================================
@@ -117,7 +117,7 @@ DAILY_DUA = [
     "🤲 اللَّهُمَّ إِنِّي أَعُوذُ بِكَ مِنَ الْعَجْزِ وَالْكَسَلِ",
 ]
 
-# =====
+# ========== دعاء فلسطين وغزة ==========
 PALESTINE_DUAS = [
     "🤲 **اللهم انصر إخواننا في فلسطين وغزة**\n\n"
     "اللهم احفظهم وارحمهم وثبت أقدامهم\n"
@@ -427,6 +427,7 @@ def get_main_keyboard():
         [InlineKeyboardButton("⚙️ الإعدادات", callback_data="settings")],
         [InlineKeyboardButton("📊 إحصائياتي", callback_data="stats")],
         [InlineKeyboardButton("❓ مساعدة", callback_data="help")],
+        [InlineKeyboardButton("🛠️ لوحة المالك", callback_data="owner_panel")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -478,7 +479,8 @@ def get_owner_keyboard():
     keyboard = [
         [InlineKeyboardButton("📢 إرسال رسالة للجميع", callback_data="broadcast")],
         [InlineKeyboardButton("📊 إحصائيات البوت", callback_data="owner_stats")],
-        [InlineKeyboardButton("📋 عدد المستخدمين", callback_data="owner_users")],
+        [InlineKeyboardButton("📋 عرض المستخدمين", callback_data="owner_users")],
+        [InlineKeyboardButton("💾 نسخ احتياطي", callback_data="owner_backup")],
         [InlineKeyboardButton("🔙 رجوع", callback_data="back")],
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -737,6 +739,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /stats - إحصائياتي
 /stop - إيقاف التذكير
 /help - المساعدة
+/owner - لوحة المالك
 
 🔔 **أوقات التذكير:**
 • الصباح: 8:00 صباحاً
@@ -755,6 +758,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             "☀️ **القائمة الرئيسية:**",
             reply_markup=get_main_keyboard(),
+            parse_mode="Markdown"
+        )
+    
+    elif query.data == "owner_panel":
+        # لوحة تحكم المالك
+        if user_id != OWNER_ID:
+            await query.edit_message_text("⛔ هذا الأمر مخصص للمالك فقط!")
+            return
+        
+        await query.edit_message_text(
+            "🛠️ **لوحة تحكم المالك**\n\n"
+            "اختر الإجراء الذي تريد القيام به:",
+            reply_markup=get_owner_keyboard(),
             parse_mode="Markdown"
         )
     
@@ -780,16 +796,33 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         users = get_all_users()
         active_users = get_all_active_users()
         
+        # حساب إحصائيات إضافية
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM users WHERE receive_morning = 1")
+        morning_enabled = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM users WHERE receive_evening = 1")
+        evening_enabled = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM users WHERE receive_random = 1")
+        random_enabled = c.fetchone()[0]
+        conn.close()
+        
         text = f"""
 📊 **إحصائيات البوت**
 
-👥 عدد المستخدمين الكلي: {len(users)}
-🟢 المستخدمين النشطين: {len(active_users)}
-🔴 المستخدمين غير النشطين: {len(users) - len(active_users)}
+👥 **المستخدمين:**
+• الإجمالي: {len(users)}
+• النشطين: {len(active_users)}
+• غير النشطين: {len(users) - len(active_users)}
 
-📅 آخر تحديث: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+🔔 **التذكيرات:**
+• مفعل الصباح: {morning_enabled}
+• مفعل المساء: {evening_enabled}
+• مفعل العشوائي: {random_enabled}
+
+📅 آخر تحديث: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 """
-        await query.edit_message_text(text)
+        await query.edit_message_text(text, parse_mode="Markdown")
     
     elif query.data == "owner_users":
         if user_id != OWNER_ID:
@@ -797,23 +830,48 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         users = get_all_users()
-        text = "📋 **قائمة المستخدمين:**\n\n"
+        text = "📋 **قائمة المستخدمين (آخر 20):**\n\n"
         
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
-        c.execute("SELECT user_id, username, first_name, registered_at FROM users ORDER BY registered_at DESC LIMIT 20")
+        c.execute("SELECT user_id, username, first_name, registered_at, active FROM users ORDER BY registered_at DESC LIMIT 20")
         results = c.fetchall()
         conn.close()
         
-        for i, (uid, username, first_name, reg_date) in enumerate(results, 1):
-            text += f"{i}. {first_name or 'مستخدم'} (@{username or 'بدون'}) - {uid}\n"
+        for i, (uid, username, first_name, reg_date, active) in enumerate(results, 1):
+            status = "🟢" if active else "🔴"
+            name = first_name or "مستخدم"
+            username_str = f"(@{username})" if username else ""
+            text += f"{i}. {status} {name} {username_str} - {uid}\n"
         
         if len(results) == 0:
             text += "لا يوجد مستخدمين حتى الآن"
         else:
             text += f"\n📌 إجمالي المستخدمين: {len(users)}"
         
-        await query.edit_message_text(text[:4000])  # تليجرام يسمح بـ 4096 حرف
+        await query.edit_message_text(text[:4000], parse_mode="Markdown")
+    
+    elif query.data == "owner_backup":
+        # إنشاء نسخة احتياطية
+        if user_id != OWNER_ID:
+            await query.edit_message_text("⛔ هذا الأمر مخصص للمالك فقط!")
+            return
+        
+        backup_file = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+        
+        try:
+            conn = sqlite3.connect(DB_NAME)
+            with sqlite3.connect(backup_file) as backup:
+                conn.backup(backup)
+            conn.close()
+            
+            await query.edit_message_text(
+                f"✅ **تم إنشاء النسخة الاحتياطية**\n\n"
+                f"📁 الملف: {backup_file}\n"
+                f"📅 التاريخ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+        except Exception as e:
+            await query.edit_message_text(f"❌ فشل إنشاء النسخة الاحتياطية: {e}")
 
 # ============================================
 # القسم 8: أوامر البوت المباشرة
@@ -968,6 +1026,7 @@ async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     success = 0
     failed = 0
+    failed_users = []
     
     # إرسال الرسالة للجميع
     for user_id in users:
@@ -981,17 +1040,51 @@ async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await asyncio.sleep(0.05)  # تجنب الحظر
         except Exception as e:
             failed += 1
+            failed_users.append(user_id)
             logger.error(f"فشل إرسال الرسالة للمستخدم {user_id}: {e}")
     
+    # تحديث رسالة التحميل
     await loading_msg.edit_text(
-        f"📢 **تم إرسال الرسالة**\n\n"
+        f"📢 **تم إرسال البث الجماعي**\n\n"
         f"✅ تم الإرسال بنجاح: {success}\n"
         f"❌ فشل الإرسال: {failed}\n"
-        f"👥 إجمالي المستخدمين: {len(users)}"
+        f"👥 إجمالي المستخدمين: {len(users)}\n\n"
+        f"📊 نسبة النجاح: {round((success/len(users))*100, 2)}%"
     )
+    
+    # إذا فشل بعض المستخدمين، أرسل قائمة بهم
+    if failed > 0 and failed_users:
+        failed_text = f"❌ المستخدمين الذين فشل الإرسال لهم:\n"
+        for uid in failed_users[:10]:
+            failed_text += f"• {uid}\n"
+        if len(failed_users) > 10:
+            failed_text += f"\nو {len(failed_users) - 10} مستخدمين آخرين..."
+        
+        await update.message.reply_text(failed_text[:4000])
+
+async def test_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """أمر اختبار التذكيرات (للمالك فقط)"""
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("⛔ هذا الأمر مخصص للمالك فقط!")
+        return
+    
+    await update.message.reply_text("⏳ جاري إرسال تذكير اختباري...")
+    
+    # إرسال تذكير الصباح
+    await send_morning_reminder(context.bot)
+    await asyncio.sleep(1)
+    
+    # إرسال تذكير المساء
+    await send_evening_reminder(context.bot)
+    await asyncio.sleep(1)
+    
+    # إرسال تذكير عشوائي
+    await send_random_reminder(context.bot)
+    
+    await update.message.reply_text("✅ تم إرسال جميع التذكيرات الاختبارية")
 
 # ============================================
-# القسم 9: التذكيرات التلقائية
+# القسم 9: التذكيرات التلقائية (مصححة)
 # ============================================
 
 def generate_random_times():
@@ -1014,7 +1107,10 @@ async def send_morning_reminder(app):
     """إرسال تذكير الصباح"""
     users = get_all_active_users()
     if not users:
+        logger.info("⚠️ لا يوجد مستخدمين نشطين لتذكير الصباح")
         return
+    
+    logger.info(f"🌅 جاري إرسال تذكير الصباح لـ {len(users)} مستخدم")
     
     # التحقق من إعدادات كل مستخدم
     for user_id in users:
@@ -1033,16 +1129,20 @@ async def send_morning_reminder(app):
 🤲 نسأل الله أن يبارك يومك
 """
         try:
-            await app.bot.send_message(user_id, text, parse_mode="Markdown")
+            await app.send_message(user_id, text, parse_mode="Markdown")
             await asyncio.sleep(0.1)
+            logger.info(f"✅ تم إرسال تذكير الصباح للمستخدم {user_id}")
         except Exception as e:
-            logger.error(f"فشل إرسال تذكير الصباح للمستخدم {user_id}: {e}")
+            logger.error(f"❌ فشل إرسال تذكير الصباح للمستخدم {user_id}: {e}")
 
 async def send_evening_reminder(app):
     """إرسال تذكير المساء"""
     users = get_all_active_users()
     if not users:
+        logger.info("⚠️ لا يوجد مستخدمين نشطين لتذكير المساء")
         return
+    
+    logger.info(f"🌙 جاري إرسال تذكير المساء لـ {len(users)} مستخدم")
     
     for user_id in users:
         _, receive_evening, _ = get_user_settings(user_id)
@@ -1060,10 +1160,11 @@ async def send_evening_reminder(app):
 🤲 نسأل الله أن يحفظك في ليلك
 """
         try:
-            await app.bot.send_message(user_id, text, parse_mode="Markdown")
+            await app.send_message(user_id, text, parse_mode="Markdown")
             await asyncio.sleep(0.1)
+            logger.info(f"✅ تم إرسال تذكير المساء للمستخدم {user_id}")
         except Exception as e:
-            logger.error(f"فشل إرسال تذكير المساء للمستخدم {user_id}: {e}")
+            logger.error(f"❌ فشل إرسال تذكير المساء للمستخدم {user_id}: {e}")
 
 async def send_random_reminder(app):
     """إرسال تذكير عشوائي"""
@@ -1092,16 +1193,50 @@ async def send_random_reminder(app):
 📌 *لا تنسَ ذكر الله في كل لحظة*
 """
     
+    logger.info(f"🎲 جاري إرسال تذكير عشوائي لـ {len(users)} مستخدم (نوع: {message_type})")
+    
     for user_id in users:
         _, _, receive_random = get_user_settings(user_id)
         if not receive_random:
             continue
         
         try:
-            await app.bot.send_message(user_id, text, parse_mode="Markdown")
+            await app.send_message(user_id, text, parse_mode="Markdown")
             await asyncio.sleep(0.1)
         except Exception as e:
-            logger.error(f"فشل إرسال تذكير عشوائي للمستخدم {user_id}: {e}")
+            logger.error(f"❌ فشل إرسال تذكير عشوائي للمستخدم {user_id}: {e}")
+
+# ===== وظائف التذكير المتوافقة مع BackgroundScheduler =====
+def morning_reminder_job(app):
+    """وظيفة متوافقة مع BackgroundScheduler"""
+    try:
+        # إنشاء event loop جديد في هذا الخيط
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(send_morning_reminder(app))
+        loop.close()
+    except Exception as e:
+        logger.error(f"❌ خطأ في تذكير الصباح: {e}")
+
+def evening_reminder_job(app):
+    """وظيفة متوافقة مع BackgroundScheduler"""
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(send_evening_reminder(app))
+        loop.close()
+    except Exception as e:
+        logger.error(f"❌ خطأ في تذكير المساء: {e}")
+
+def random_reminder_job(app):
+    """وظيفة متوافقة مع BackgroundScheduler"""
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(send_random_reminder(app))
+        loop.close()
+    except Exception as e:
+        logger.error(f"❌ خطأ في التذكير العشوائي: {e}")
 
 def schedule_random_reminders(app):
     """جدولة التذكيرات العشوائية بشكل يومي"""
@@ -1113,8 +1248,9 @@ def schedule_random_reminders(app):
     # إضافة التذكيرات العشوائية
     for hour, minute in random_times:
         scheduler.add_job(
-            lambda: asyncio.create_task(send_random_reminder(app)),
+            random_reminder_job,
             CronTrigger(hour=hour, minute=minute),
+            args=[app],
             id=f"random_{hour}_{minute}"
         )
         logger.info(f"⏰ تم جدولة تذكير عشوائي في {hour}:{minute:02d}")
@@ -1128,16 +1264,18 @@ def start_scheduler(app):
     
     # تذكير الصباح
     scheduler.add_job(
-        lambda: asyncio.create_task(send_morning_reminder(app)),
+        morning_reminder_job,
         CronTrigger(hour=MORNING_HOUR, minute=MORNING_MINUTE),
+        args=[app],
         id="morning_reminder"
     )
     logger.info(f"⏰ تذكير الصباح: {MORNING_HOUR}:{MORNING_MINUTE:02d}")
     
     # تذكير المساء
     scheduler.add_job(
-        lambda: asyncio.create_task(send_evening_reminder(app)),
+        evening_reminder_job,
         CronTrigger(hour=EVENING_HOUR, minute=EVENING_MINUTE),
+        args=[app],
         id="evening_reminder"
     )
     logger.info(f"⏰ تذكير المساء: {EVENING_HOUR}:{EVENING_MINUTE:02d}")
@@ -1161,7 +1299,10 @@ def start_scheduler(app):
 def refresh_random_reminders(app, old_scheduler):
     """تجديد التذكيرات العشوائية كل يوم"""
     logger.info("🔄 تجديد التذكيرات العشوائية...")
-    old_scheduler.shutdown()
+    try:
+        old_scheduler.shutdown()
+    except:
+        pass
     new_scheduler = schedule_random_reminders(app)
     new_scheduler.start()
     return new_scheduler
@@ -1192,6 +1333,7 @@ def main():
     app.add_handler(CommandHandler("stop", stop_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CommandHandler("owner", owner_panel))
+    app.add_handler(CommandHandler("test", test_reminder))  # أمر الاختبار
     
     # ===== معالج الأزرار =====
     app.add_handler(CallbackQueryHandler(button_handler))
@@ -1200,7 +1342,7 @@ def main():
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_broadcast))
     
     # ===== تشغيل المجدول =====
-    scheduler = start_scheduler(app)
+    scheduler = start_scheduler(app.bot)
     
     # ===== تشغيل البوت =====
     logger.info("🤖 بوت ذكرني يعمل الآن...")
@@ -1208,6 +1350,7 @@ def main():
     logger.info(f"   🌅 الصباح: {MORNING_HOUR}:{MORNING_MINUTE:02d}")
     logger.info(f"   🌙 المساء: {EVENING_HOUR}:{EVENING_MINUTE:02d}")
     logger.info(f"   🎲 عشوائي: 2-3 مرات يومياً")
+    logger.info("📢 للاختبار الفوري استخدم الأمر /test")
     
     try:
         app.run_polling()
